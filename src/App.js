@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Train, MapPin, User, Lock, Shield, Clock, AlertCircle } from 'lucide-react';
+import { FirebaseHelper } from './firebase';
 
 // ==================== STYLES ====================
 const styles = `
@@ -131,6 +132,67 @@ const styles = `
   border-color: #d1d5db;
 }
 
+.input-wrapper input:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.error-message {
+  background: linear-gradient(90deg, #fee2e2 0%, #fecaca 100%);
+  border-left: 4px solid #ef4444;
+  color: #991b1b;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.1);
+}
+
+.success-message {
+  background: linear-gradient(90deg, #d1fae5 0%, #a7f3d0 100%);
+  border-left: 4px solid #10b981;
+  color: #065f46;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.1);
+}
+
+.loading-message {
+  background: linear-gradient(90deg, #dbeafe 0%, #bfdbfe 100%);
+  border-left: 4px solid #3b82f6;
+  color: #1e40af;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #3b82f6;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .suggestions-dropdown {
   position: absolute;
   z-index: 20;
@@ -189,12 +251,18 @@ const styles = `
   transform: scale(0.98);
 }
 
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .btn-primary {
   background: linear-gradient(90deg, #2563eb 0%, #4f46e5 100%);
   color: white;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: linear-gradient(90deg, #1d4ed8 0%, #4338ca 100%);
   box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
 }
@@ -204,7 +272,7 @@ const styles = `
   color: white;
 }
 
-.btn-success:hover {
+.btn-success:hover:not(:disabled) {
   background: linear-gradient(90deg, #047857 0%, #065f46 100%);
   box-shadow: 0 6px 20px rgba(5, 150, 105, 0.4);
 }
@@ -421,6 +489,53 @@ const styles = `
   font-size: 24px;
   font-weight: bold;
   color: #1f2937;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  border-radius: 16px;
+  padding: 20px;
+  border: 2px solid #fbbf24;
+  box-shadow: 0 4px 12px rgba(251, 191, 36, 0.2);
+  transition: all 0.3s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px rgba(251, 191, 36, 0.3);
+}
+
+.stat-card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.stat-icon {
+  font-size: 32px;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #92400e;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-value {
+  font-size: 36px;
+  font-weight: bold;
+  color: #78350f;
+  line-height: 1;
 }
 
 .train-schedule {
@@ -649,7 +764,7 @@ const styles = `
   box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
 }
 
-.status-icon {
+.status-icon-display {
   font-size: 40px;
 }
 
@@ -715,17 +830,19 @@ const styles = `
   .status-panel {
     padding: 20px;
   }
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
 }
 `;
 
-// Inject styles - using useEffect to ensure it runs properly
+// Style Injector
 const StyleInjector = () => {
   React.useEffect(() => {
     const styleSheet = document.createElement("style");
     styleSheet.id = "auto-rail-gate-styles";
     styleSheet.textContent = styles;
     
-    // Remove existing styles if any
     const existingStyle = document.getElementById("auto-rail-gate-styles");
     if (existingStyle) {
       existingStyle.remove();
@@ -800,17 +917,58 @@ function LoginPage({ onLogin, switchToRegister }) {
     stationMasterId: '',
     password: ''
   });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+    setError('');
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    // Validation
     if (!formData.stationCode || !formData.stationMasterId || !formData.password) {
-      alert('Please fill all fields!');
+      setError('Please fill all fields!');
       return;
     }
-    onLogin(formData);
+
+    setLoading(true);
+    setError('');
+
+    try {
+      // Check if user is registered
+      const isRegistered = await FirebaseHelper.isUserRegistered(
+        formData.stationMasterId, 
+        formData.stationCode
+      );
+
+      if (!isRegistered) {
+        setError('Station master not registered. Please register first.');
+        setLoading(false);
+        return;
+      }
+
+      // Validate credentials
+      const user = await FirebaseHelper.validateUser(
+        formData.stationMasterId, 
+        formData.stationCode, 
+        formData.password
+      );
+
+      if (!user) {
+        setError('Invalid credentials. Please check your Station Master ID, Station Code, and Password.');
+        setLoading(false);
+        return;
+      }
+
+      // Login successful
+      onLogin(user);
+    } catch (err) {
+      setError('Login failed. Please try again.');
+      console.error('Login error:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -835,6 +993,7 @@ function LoginPage({ onLogin, switchToRegister }) {
               onChange={handleInputChange}
               placeholder="Enter station code"
               IconComponent={MapPin}
+              disabled={loading}
             />
 
             <InputField
@@ -844,6 +1003,7 @@ function LoginPage({ onLogin, switchToRegister }) {
               onChange={handleInputChange}
               placeholder="Enter station master ID"
               IconComponent={User}
+              disabled={loading}
             />
 
             <InputField
@@ -854,10 +1014,29 @@ function LoginPage({ onLogin, switchToRegister }) {
               onChange={handleInputChange}
               placeholder="Enter password"
               IconComponent={Lock}
+              disabled={loading}
             />
 
-            <button onClick={handleSubmit} className="btn btn-primary">
-              LOGIN
+            {loading && (
+              <div className="loading-message">
+                <div className="spinner"></div>
+                Logging in...
+              </div>
+            )}
+
+            {error && (
+              <div className="error-message">
+                <AlertCircle size={20} />
+                {error}
+              </div>
+            )}
+
+            <button 
+              onClick={handleSubmit} 
+              className="btn btn-primary"
+              disabled={loading}
+            >
+              {loading ? 'LOGGING IN...' : 'LOGIN'}
             </button>
           </div>
 
@@ -906,9 +1085,15 @@ function RegisterPage({ onRegister, switchToLogin }) {
   
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [filteredStations, setFilteredStations] = useState([]);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
+    setError('');
+    setSuccess('');
+    
     if (name === 'stationName') {
       setFormData({ ...formData, stationName: value });
       
@@ -936,16 +1121,58 @@ function RegisterPage({ onRegister, switchToLogin }) {
     setShowSuggestions(false);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    // Validation
+    if (!formData.stationName || !formData.gateNumber || !formData.stationCode || 
+        !formData.stationMasterId || !formData.password || !formData.confirmPassword) {
+      setError('Please fill all fields!');
+      return;
+    }
+
     if (formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match!');
+      setError('Passwords do not match!');
       return;
     }
-    if (!formData.stationName || !formData.gateNumber || !formData.stationCode || !formData.stationMasterId || !formData.password) {
-      alert('Please fill all fields!');
+
+    if (formData.password.length < 6) {
+      setError('Password must be at least 6 characters long!');
       return;
     }
-    onRegister(formData);
+
+    setLoading(true);
+    setError('');
+
+    try {
+      // Check if user already exists
+      const isRegistered = await FirebaseHelper.isUserRegistered(
+        formData.stationMasterId, 
+        formData.stationCode
+      );
+
+      if (isRegistered) {
+        setError('Station master already registered with this ID and Station Code!');
+        setLoading(false);
+        return;
+      }
+
+      // Register the user
+      const result = await FirebaseHelper.addUser(formData);
+      
+      if (result.success) {
+        setSuccess('Registration successful! Redirecting to control panel...');
+        
+        setTimeout(() => {
+          onRegister(formData);
+        }, 1500);
+      } else {
+        setError('Registration failed. Please try again.');
+      }
+    } catch (err) {
+      setError('Registration failed. Please try again.');
+      console.error('Registration error:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -970,6 +1197,7 @@ function RegisterPage({ onRegister, switchToLogin }) {
               filteredStations={filteredStations}
               selectStation={selectStation}
               setShowSuggestions={setShowSuggestions}
+              disabled={loading}
             />
 
             <InputField
@@ -979,6 +1207,7 @@ function RegisterPage({ onRegister, switchToLogin }) {
               onChange={handleInputChange}
               placeholder="Enter gate number"
               IconComponent={Shield}
+              disabled={loading}
             />
 
             <InputField
@@ -988,6 +1217,7 @@ function RegisterPage({ onRegister, switchToLogin }) {
               onChange={handleInputChange}
               placeholder="Enter station code"
               IconComponent={MapPin}
+              disabled={loading}
             />
 
             <InputField
@@ -997,6 +1227,7 @@ function RegisterPage({ onRegister, switchToLogin }) {
               onChange={handleInputChange}
               placeholder="Enter station master ID"
               IconComponent={User}
+              disabled={loading}
             />
 
             <InputField
@@ -1007,6 +1238,7 @@ function RegisterPage({ onRegister, switchToLogin }) {
               onChange={handleInputChange}
               placeholder="Enter password"
               IconComponent={Lock}
+              disabled={loading}
             />
 
             <InputField
@@ -1017,10 +1249,38 @@ function RegisterPage({ onRegister, switchToLogin }) {
               onChange={handleInputChange}
               placeholder="Confirm password"
               IconComponent={Lock}
+              disabled={loading}
             />
 
-            <button onClick={handleSubmit} className="btn btn-success">
-              REGISTER
+            {loading && (
+              <div className="loading-message">
+                <div className="spinner"></div>
+                Registering...
+              </div>
+            )}
+
+            {error && (
+              <div className="error-message">
+                <AlertCircle size={20} />
+                {error}
+              </div>
+            )}
+
+            {success && (
+              <div className="success-message">
+                <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {success}
+              </div>
+            )}
+
+            <button 
+              onClick={handleSubmit} 
+              className="btn btn-success"
+              disabled={loading}
+            >
+              {loading ? 'REGISTERING...' : 'REGISTER'}
             </button>
           </div>
 
@@ -1043,6 +1303,24 @@ function ControlPanel({ stationData, onLogout }) {
   const [gateStatus, setGateStatus] = useState('closed');
   const [isAutoMode, setIsAutoMode] = useState(true);
   const [countdown, setCountdown] = useState(15);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+
+  useEffect(() => {
+    // Get total registered users from Firebase
+    const fetchUserCount = async () => {
+      try {
+        const count = await FirebaseHelper.getTotalUsersCount();
+        setTotalUsers(count);
+      } catch (error) {
+        console.error('Error fetching user count:', error);
+      } finally {
+        setLoadingUsers(false);
+      }
+    };
+
+    fetchUserCount();
+  }, []);
 
   React.useEffect(() => {
     if (isAutoMode && gateStatus === 'closing') {
@@ -1071,13 +1349,15 @@ function ControlPanel({ stationData, onLogout }) {
   return (
     <div className="control-panel-page">
       <div className="panel-container">
-        <PanelHeader stationData={stationData} onLogout={onLogout} />
+        <PanelHeader stationData={stationData} onLogout={onLogout} totalUsers={totalUsers} />
         <StatusPanel 
           gateStatus={gateStatus}
           toggleGate={toggleGate}
           isAutoMode={isAutoMode}
           setIsAutoMode={setIsAutoMode}
           countdown={countdown}
+          totalUsers={totalUsers}
+          loadingUsers={loadingUsers}
         />
       </div>
     </div>
@@ -1111,7 +1391,7 @@ function Footer() {
   );
 }
 
-function InputField({ label, name, value, onChange, placeholder, IconComponent, type = 'text' }) {
+function InputField({ label, name, value, onChange, placeholder, IconComponent, type = 'text', disabled = false }) {
   return (
     <div className="form-group">
       <label>{label}</label>
@@ -1124,13 +1404,14 @@ function InputField({ label, name, value, onChange, placeholder, IconComponent, 
           onChange={onChange}
           placeholder={placeholder}
           autoComplete="off"
+          disabled={disabled}
         />
       </div>
     </div>
   );
 }
 
-function StationSearchField({ formData, handleInputChange, showSuggestions, filteredStations, selectStation, setShowSuggestions }) {
+function StationSearchField({ formData, handleInputChange, showSuggestions, filteredStations, selectStation, setShowSuggestions, disabled = false }) {
   return (
     <div className="form-group">
       <label>Station Name</label>
@@ -1144,8 +1425,9 @@ function StationSearchField({ formData, handleInputChange, showSuggestions, filt
           onFocus={() => formData.stationName && setShowSuggestions(true)}
           placeholder="Type to search station..."
           autoComplete="off"
+          disabled={disabled}
         />
-        {showSuggestions && filteredStations.length > 0 && (
+        {showSuggestions && filteredStations.length > 0 && !disabled && (
           <div className="suggestions-dropdown">
             {filteredStations.map((station, index) => (
               <div
@@ -1164,7 +1446,7 @@ function StationSearchField({ formData, handleInputChange, showSuggestions, filt
   );
 }
 
-function PanelHeader({ stationData, onLogout }) {
+function PanelHeader({ stationData, onLogout, totalUsers }) {
   return (
     <div className="panel-header">
       <div className="panel-header-left">
@@ -1192,7 +1474,7 @@ function PanelHeader({ stationData, onLogout }) {
   );
 }
 
-function StatusPanel({ gateStatus, toggleGate, isAutoMode, setIsAutoMode, countdown }) {
+function StatusPanel({ gateStatus, toggleGate, isAutoMode, setIsAutoMode, countdown, totalUsers, loadingUsers }) {
   return (
     <div className="status-panel">
       <div className="panel-title">
@@ -1202,10 +1484,36 @@ function StatusPanel({ gateStatus, toggleGate, isAutoMode, setIsAutoMode, countd
         <h2>Status Panel</h2>
       </div>
 
+      <StatsGrid totalUsers={totalUsers} loadingUsers={loadingUsers} />
       <TrainSchedule />
       <GateControls gateStatus={gateStatus} toggleGate={toggleGate} />
       <AutoModeToggle isAutoMode={isAutoMode} setIsAutoMode={setIsAutoMode} />
       <StatusDisplay gateStatus={gateStatus} countdown={countdown} />
+    </div>
+  );
+}
+
+function StatsGrid({ totalUsers, loadingUsers }) {
+  return (
+    <div className="stats-grid">
+      <div className="stat-card">
+        <div className="stat-card-header">
+          <div className="stat-icon">👥</div>
+          <div>
+            <div className="stat-label">Total Registered Users</div>
+            <div className="stat-value">
+              {loadingUsers ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div className="spinner" style={{ borderColor: '#78350f', borderTopColor: 'transparent' }}></div>
+                  <span style={{ fontSize: '18px' }}>Loading...</span>
+                </div>
+              ) : (
+                totalUsers
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1283,7 +1591,7 @@ function StatusDisplay({ gateStatus, countdown }) {
 
   return (
     <div className={`status-display ${config.class}`}>
-      <div className="status-icon">{config.icon}</div>
+      <div className="status-icon-display">{config.icon}</div>
       <div className="status-text">
         <p className="status-label">CURRENT STATUS</p>
         <p className="status-value">{config.text}</p>
